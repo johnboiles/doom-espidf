@@ -324,9 +324,9 @@ void IRAM_ATTR displayTask(void *arg) {
 		uint8_t *myData=(uint8_t*)currFbPtr;
 #endif
 
-		send_header_start(spi, 0, 0, 320, 240);
+		send_header_start(spi, 0, 0, 128, 128);
 		send_header_cleanup(spi);
-		for (x=0; x<320*240; x+=MEM_PER_TRANS) {
+		for (x=0; x<128*128; x+=MEM_PER_TRANS) {
 #ifdef DOUBLE_BUFFER
 			for (i=0; i<MEM_PER_TRANS; i+=4) {
 				uint32_t d=currFbPtr[(x+i)/4];
@@ -381,7 +381,7 @@ void spi_lcd_wait_finish() {
 
 void spi_lcd_send(uint16_t *scr) {
 #ifdef DOUBLE_BUFFER
-	memcpy(currFbPtr, scr, 320*240);
+	memcpy(currFbPtr, scr, 128*128);
 	//Theoretically, also should double-buffer the lcdpal array... ahwell.
 #else
 	currFbPtr=scr;
@@ -394,8 +394,8 @@ void spi_lcd_init() {
     dispSem=xSemaphoreCreateBinary();
     dispDoneSem=xSemaphoreCreateBinary();
 #ifdef DOUBLE_BUFFER
-	//currFbPtr=pvPortMallocCaps(320*240, MALLOC_CAP_32BIT);
-    currFbPtr=heap_caps_malloc(320*240, MALLOC_CAP_32BIT);
+	//currFbPtr=pvPortMallocCaps(128*128, MALLOC_CAP_32BIT);
+    currFbPtr=heap_caps_malloc(128*128, MALLOC_CAP_32BIT);
 #endif
 #if CONFIG_FREERTOS_UNICORE
 	xTaskCreatePinnedToCore(&displayTask, "display", 6000, NULL, 6, NULL, 0);
