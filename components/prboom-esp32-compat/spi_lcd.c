@@ -24,6 +24,10 @@
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 
+#if (CONFIG_HW_LCD_TYPE == 2)
+#include "Adafruit_SSD1351.h"
+#endif
+#include "doomdef.h"
 #include "sdkconfig.h"
 
 
@@ -58,8 +62,37 @@ typedef struct {
     uint8_t databytes; //No of data in data; bit 7 = delay after set; 0xFF = end of cmds.
 } ili_init_cmd_t;
 
-#undef CONFIG_HW_LCD_TYPE
-#define CONFIG_HW_LCD_TYPE 0
+// SSD1351 OLED
+#if (CONFIG_HW_LCD_TYPE == 2)
+
+static const ili_init_cmd_t ili_init_cmds[]={
+    {SSD1351_CMD_COMMANDLOCK, {0x12}, 1}, // Set command lock, 1 arg
+    {SSD1351_CMD_COMMANDLOCK, {0xB1}, 1}, // Set command lock, 1 arg
+    {SSD1351_CMD_DISPLAYOFF, {0}, 0}, // Display off, no args
+    {SSD1351_CMD_CLOCKDIV, {0xF1}, 1}, // 7:4 = Oscillator Freq, 3:0 = CLK Div Ratio (A[3:0]+1 = 1..16)
+    {SSD1351_CMD_MUXRATIO, {127}, 1},
+    {SSD1351_CMD_DISPLAYOFFSET, {0x0}, 1},
+    {SSD1351_CMD_SETGPIO, {0x00}, 1},
+    {SSD1351_CMD_FUNCTIONSELECT, {0x01}, 1}, // internal (diode drop)
+    {SSD1351_CMD_PRECHARGE, {0x32}, 1},
+    {SSD1351_CMD_VCOMH, {0x05}, 1},
+    {SSD1351_CMD_NORMALDISPLAY, {0}, 0},
+    {SSD1351_CMD_CONTRASTABC, {0xC8, 0x80, 0xC8}, 3},
+    {SSD1351_CMD_CONTRASTMASTER, {0x0F}, 1},
+    {SSD1351_CMD_SETVSL, {0xA0, 0xB5, 0x55}, 3},
+    {SSD1351_CMD_PRECHARGE2, {0x01}, 1},
+    {SSD1351_CMD_DISPLAYON, {0}, 0}, // Main screen turn on
+
+    // Rotation settings
+    {SSD1351_CMD_SETREMAP, {0b01110100}, 1},
+    {SSD1351_CMD_STARTLINE, {128}, 1},
+
+    // Done
+    {0, {0}, 0xff},
+};
+
+#endif
+
 #if (CONFIG_HW_LCD_TYPE == 1)
 
 static const ili_init_cmd_t ili_init_cmds[]={
@@ -84,7 +117,6 @@ static const ili_init_cmd_t ili_init_cmds[]={
 #endif
 
 #if (CONFIG_HW_LCD_TYPE == 0)
-
 
 static const ili_init_cmd_t ili_init_cmds[]={
     {0xCF, {0x00, 0x83, 0X30}, 3},
@@ -210,11 +242,26 @@ static void send_header_start(spi_device_handle_t spi, int xpos, int ypos, int w
             trans[x].user=(void*)0;
         } else {
             //Odd transfers are data
+            // The SSD1351 OLED only supports 2 bytes per axis (only up to 256 pixels)
+            #if (CONFIG_HW_LCD_TYPE == 2)
+            trans[x].length=8*2;
+            #else
             trans[x].length=8*4;
+            #endif
             trans[x].user=(void*)1;
         }
         trans[x].flags=SPI_TRANS_USE_TXDATA;
     }
+
+    #if (CONFIG_HW_LCD_TYPE == 2)
+    trans[0].tx_data[0]=SSD1351_CMD_SETCOLUMN;           //Column Address Set
+    trans[1].tx_data[0]=xpos;              //Start Col
+    trans[1].tx_data[1]=(xpos+w-1)&0xff;     //End Col
+    trans[2].tx_data[0]=SSD1351_CMD_SETROW;           //Page address set
+    trans[3].tx_data[0]=ypos&0xff;      //start page
+    trans[3].tx_data[1]=(ypos+h-1)&0xff;  //end page
+    trans[4].tx_data[0]=SSD1351_CMD_WRITERAM;           //memory write
+    #else
     trans[0].tx_data[0]=0x2A;           //Column Address Set
     trans[1].tx_data[0]=xpos>>8;              //Start Col High
     trans[1].tx_data[1]=xpos;              //Start Col Low
@@ -226,6 +273,7 @@ static void send_header_start(spi_device_handle_t spi, int xpos, int ypos, int w
     trans[3].tx_data[2]=(ypos+h-1)>>8;    //end page high
     trans[3].tx_data[3]=(ypos+h-1)&0xff;  //end page low
     trans[4].tx_data[0]=0x2C;           //memory write
+    #endif
 
     //Queue all transactions.
     for (x=0; x<5; x++) {
@@ -263,7 +311,7 @@ SemaphoreHandle_t dispSem = NULL;
 SemaphoreHandle_t dispDoneSem = NULL;
 
 #define NO_SIM_TRANS 5 //Amount of SPI transfers to queue in parallel
-#define MEM_PER_TRANS 320*2 //in 16-bit words
+#define MEM_PER_TRANS SCREENWIDTH*2 //in 16-bit words
 
 extern int16_t lcdpal[256];
 
@@ -285,7 +333,13 @@ void IRAM_ATTR displayTask(void *arg) {
         .max_transfer_sz=(MEM_PER_TRANS*2)+16
     };
     spi_device_interface_config_t devcfg={
-        .clock_speed_hz=40000000,               //Clock out at 26 MHz. Yes, that's heavily overclocked.
+        #if (CONFIG_HW_LCD_TYPE == 2)
+        // SSD1351 supports up to 20MHz, but above ~15MHz, some frames are corrupted.
+        // But anything over 8MHz should handle 30FPS at 128x128
+        .clock_speed_hz=13333333,
+        #else
+        .clock_speed_hz=40000000,               //Clock out at 40 MHz. Yes, that's heavily overclocked.
+        #endif
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS,               //CS pin
         .queue_size=NO_SIM_TRANS,               //We want to be able to queue this many transfers
@@ -324,9 +378,9 @@ void IRAM_ATTR displayTask(void *arg) {
 		uint8_t *myData=(uint8_t*)currFbPtr;
 #endif
 
-		send_header_start(spi, 0, 0, 128, 128);
+		send_header_start(spi, 0, 0, SCREENWIDTH, SCREENHEIGHT);
 		send_header_cleanup(spi);
-		for (x=0; x<128*128; x+=MEM_PER_TRANS) {
+		for (x=0; x<SCREENWIDTH*SCREENHEIGHT; x+=MEM_PER_TRANS) {
 #ifdef DOUBLE_BUFFER
 			for (i=0; i<MEM_PER_TRANS; i+=4) {
 				uint32_t d=currFbPtr[(x+i)/4];
@@ -381,7 +435,7 @@ void spi_lcd_wait_finish() {
 
 void spi_lcd_send(uint16_t *scr) {
 #ifdef DOUBLE_BUFFER
-	memcpy(currFbPtr, scr, 128*128);
+	memcpy(currFbPtr, scr, SCREENWIDTH*SCREENHEIGHT);
 	//Theoretically, also should double-buffer the lcdpal array... ahwell.
 #else
 	currFbPtr=scr;
@@ -394,8 +448,8 @@ void spi_lcd_init() {
     dispSem=xSemaphoreCreateBinary();
     dispDoneSem=xSemaphoreCreateBinary();
 #ifdef DOUBLE_BUFFER
-	//currFbPtr=pvPortMallocCaps(128*128, MALLOC_CAP_32BIT);
-    currFbPtr=heap_caps_malloc(128*128, MALLOC_CAP_32BIT);
+	//currFbPtr=pvPortMallocCaps(SCREENWIDTH*SCREENHEIGHT, MALLOC_CAP_32BIT);
+    currFbPtr=heap_caps_malloc(SCREENWIDTH*SCREENHEIGHT, MALLOC_CAP_32BIT);
 #endif
 #if CONFIG_FREERTOS_UNICORE
 	xTaskCreatePinnedToCore(&displayTask, "display", 6000, NULL, 6, NULL, 0);

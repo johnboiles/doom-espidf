@@ -93,7 +93,7 @@ typedef enum {
 // For resize of screen, at start of game.
 //
 
-#define BASE_WIDTH 320
+#define BASE_WIDTH 128
 
 // It is educational but futile to change this
 //  scaling e.g. to 2. Drawing of status bar,

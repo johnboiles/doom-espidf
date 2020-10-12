@@ -28,6 +28,9 @@ config HW_LCD_TYPE_ILI
 config HW_LCD_TYPE_ST
 	bool "ST7789V LCD"
 
+config HW_LCD_TYPE_SSD
+	bool "SSD1351 OLED"
+
 endchoice
 
 config HW_WROVERKIT
@@ -42,6 +45,7 @@ config HW_LCD_TYPE
 	default 0 if HW_WROVERKIT_V1
 	default 0 if HW_LCD_TYPE_ILI
 	default 1 if HW_LCD_TYPE_ST
+	default 2 if HW_LCD_TYPE_SSD
 
 config HW_LCD_MISO_GPIO_CUST
 	int "LCD MISO pin"
